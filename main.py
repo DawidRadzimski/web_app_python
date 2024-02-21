@@ -32,26 +32,24 @@ class HttpHandler(BaseHTTPRequestHandler):
     """ Handle POST requests """
 
     def do_POST(self):
-        if self.path == '/message':
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length).decode('utf-8')
-            parsed_data = urllib.parse.parse_qs(post_data)
-            username = parsed_data['username'][0]
-            message = parsed_data['message'][0]
-            current_time = datetime.now().isoformat()
-
-            try:
-                udp_socket.sendto(json.dumps({current_time: {"username": username, "message": message}}).encode(),
-                                  (SOCKET_IP, SOCKET_PORT))
-            except Exception as e:
-                print("Error sending data via UDP:", e)
-
-            self.send_response(HTTPStatus.FOUND.value)
-            self.send_header('Location', '/')
-            self.end_headers()
-        else:
-            self.send_response(HTTPStatus.NOT_FOUND.value)
-            self.end_headers()
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length).decode('utf-8')
+        print("Received POST data:", post_data)  # Dodaj tę linię
+    
+        parsed_data = urllib.parse.parse_qs(post_data)
+        username = parsed_data.get('username', [''])[0]
+        message = parsed_data.get('message', [''])[0]
+        current_time = datetime.now().isoformat()
+    
+        try:
+            udp_socket.sendto(json.dumps({current_time: {"username": username, "message": message}}).encode(),
+                              (SOCKET_IP, SOCKET_PORT))
+        except Exception as e:
+            print("Error sending data via UDP:", e)
+    
+        self.send_response(HTTPStatus.FOUND.value)
+        self.send_header('Location', '/')
+        self.end_headers()
 
     """ Send an HTML file as response """
 
@@ -81,7 +79,7 @@ class HttpHandler(BaseHTTPRequestHandler):
 
 
 def run_http_server(server_class=HTTPServer, handler_class=HttpHandler):
-    server_address = ('', 3000)
+    server_address = ('', 8000)
     http = server_class(server_address, handler_class)
     try:
         http.serve_forever()
@@ -93,17 +91,24 @@ def run_http_server(server_class=HTTPServer, handler_class=HttpHandler):
 
 
 def save_data(data):
-    data_parse = urllib.parse.unquote_plus(data.decode())
-    data_path = STORAGE_PATH.joinpath("data.json")
     try:
-        with open(data_path, encoding="utf-8") as file:
-            data_json = json.load(file)
-    except FileNotFoundError:
-        data_json = {}
-    data_json[str(datetime.now())] = {key: value for key, value in [
-        el.split('=') for el in data_parse.split('&')]}
-    with open(data_path, "w", encoding="utf-8") as fh:
-        json.dump(data_json, fh, indent=4, ensure_ascii=False)
+        post_data = json.loads(data.decode())
+        print("Decoded POST data:", post_data)
+
+        data_path = STORAGE_PATH.joinpath("data.json")
+        if data_path.exists():
+            with open(data_path, "r", encoding="utf-8") as file:
+                data_json = json.load(file)
+        else:
+            data_json = {}
+
+        timestamp = str(datetime.now())
+        data_json[timestamp] = post_data
+
+        with open(data_path, "w", encoding="utf-8") as file:
+            json.dump(data_json, file, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print("Error saving data to JSON file:", e)
 
 
 """ Run the UDP socket server """
@@ -117,7 +122,6 @@ def run_udp_socket_server(ip, port):
         while True:
             data, address = udp_socket.recvfrom(1024)
             save_data(data)
-
     except KeyboardInterrupt:
         print(f'Keyboard interrupt detected. Shutting down the server.')
     finally:
@@ -131,8 +135,7 @@ if __name__ == '__main__':
         STORAGE_PATH.mkdir()
 
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_socket_server_thread = Thread(
-        target=run_udp_socket_server, args=(SOCKET_IP, SOCKET_PORT))
+    udp_socket_server_thread = Thread(target=run_udp_socket_server, args=(SOCKET_IP, SOCKET_PORT))
     udp_socket_server_thread.start()
 
     run_http_server()
